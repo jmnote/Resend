@@ -4,69 +4,73 @@ namespace MediaWiki\Extension\Resend;
 
 use MailAddress;
 use MediaWiki\Hook\AlternateUserMailerHook;
-use Resend\Exceptions\ErrorException;
+use MWException;
 use Throwable;
 
-class Hooks implements AlternateUserMailerHook {
-	/**
-	 * Send MediaWiki mail through Resend.
-	 *
-	 * @param MailAddress[]|MailAddress $to
-	 * @param MailAddress $from
-	 * @param string $subject
-	 * @param string $body
-	 * @return bool|string
-	 */
-	public function onAlternateUserMailer( $headers, $to, $from, $subject, $body ) {
-		global $wgResendAPIKey;
-		if ( !$wgResendAPIKey ) {
-			return 'Resend API key is not configured. Set $wgResendAPIKey in LocalSettings.php.';
-		}
+class Hooks implements AlternateUserMailerHook
+{
+    /**
+     * Send MediaWiki mail through Resend.
+     *
+     * @param  MailAddress[]|MailAddress  $to
+     * @param  MailAddress  $from
+     * @param  string  $subject
+     * @param  string  $body
+     * @return bool
+     *
+     * @throws MWException
+     */
+    public function onAlternateUserMailer($headers, $to, $from, $subject, $body)
+    {
+        global $wgResendAPIKey;
+        if (! $wgResendAPIKey) {
+            throw new MWException('Please set $wgResendAPIKey in LocalSettings.php.');
+        }
 
-		$ms = is_array( $to ) ? $to : [ $to ];
+        $toEmails = [];
+        $ms = is_array($to) ? $to : [$to];
+        foreach ($ms as $m) {
+            $toEmails[] = $this->extractValidEmail($m, 'recipient');
+        }
+        if ($toEmails === []) {
+            throw new MWException('No recipient address resolved from MediaWiki mail payload.');
+        }
 
-		$toEmails = [];
-		foreach ( $ms as $m ) {
-			if ( !( $m instanceof MailAddress ) ) {
-				return 'Resend: invalid recipient payload.';
-			}
+        $fromEmail = $this->extractValidEmail($from, 'sender');
 
-			$email = $m->address;
-			if ( !$this->isValidEmail( $email ) ) {
-				return 'Resend: invalid recipient email found.';
-			}
+        try {
+            $payload = [
+                'from' => $fromEmail,
+                'to' => $toEmails,
+                'subject' => (string) $subject,
+                'text' => (string) $body,
+            ];
 
-			$toEmails[] = $email;
-		}
-		if ( $toEmails === [] ) {
-			return 'Resend: no recipient address resolved from MediaWiki mail payload.';
-		}
+            $resend = \Resend::client($wgResendAPIKey);
+            $resend->emails->send($payload);
 
-		$fromEmail = $from->address;
-		if ( !$this->isValidEmail( $fromEmail ) ) {
-			return 'Resend: invalid sender address. Check $wgPasswordSender and mail settings.';
-		}
+            return false;
+        } catch (Throwable $e) {
+            throw new MWException($e->getMessage());
+        }
+    }
 
-		try {
-			$payload = [
-				'from' => $fromEmail,
-				'to' => $toEmails,
-				'subject' => (string)$subject,
-				'text' => (string)$body
-			];
+    /**
+     * @param mixed $mailAddress
+     *
+     * @throws MWException
+     */
+    private function extractValidEmail($mailAddress, string $role): string
+    {
+        if (! ($mailAddress instanceof MailAddress)) {
+            throw new MWException("Invalid {$role} payload for Resend mailer.");
+        }
 
-			$resend = \Resend::client( $wgResendAPIKey );
-			$resend->emails->send( $payload );
-		} catch ( ErrorException $e ) {
-			return 'Resend API error: ' . $e->getMessage();
-		} catch ( Throwable $e ) {
-			return 'Resend mailer failure: ' . $e->getMessage();
-		}
+        $email = $mailAddress->address;
+        if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            throw new MWException("Invalid {$role} email found.");
+        }
 
-		return false;
-	}
-
-	private function isValidEmail( string $email ): bool {
-		return filter_var( $email, FILTER_VALIDATE_EMAIL ) !== false;
-	}
+        return $email;
+    }
 }
