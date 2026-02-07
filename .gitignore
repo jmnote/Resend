@@ -1,0 +1,15 @@
+/vendor/
+
+# IDE/editor
+/.idea/
+/.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test/cache artifacts
+/.phpunit.result.cache
+/coverage/
